@@ -3,3 +3,7 @@
 __pycache__/
 materials/
 .DS_Store
+
+# в git только сама презентация
+presentation/*
+!presentation/slides.html
