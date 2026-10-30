@@ -97,7 +97,7 @@ def examples_block(examples, limit=4):
 
 
 def analyze(text):
-    with st.status("Сравниваем заявку с рынком…", expanded=True) as status:
+    with st.status("Сравниваем заявку с рынком — обычно около минуты…", expanded=True) as status:
         st.write("① GigaChat разбирает заявку")
         request = parse.parse_request(text)
         st.write("② Отбираем вакансии по должности и городу")
@@ -138,7 +138,10 @@ with top_right:
 stepper(state.step)
 
 if state.step == 0:
-    st.subheader("Заявка руководителя")
+    head, action = st.columns([3, 1], vertical_alignment="bottom")
+    head.subheader("Заявка руководителя")
+    compare_clicked = action.button("Сравнить с рынком →", type="primary", width="stretch")
+    progress = st.container()
     source = st.radio("Откуда взять заявку", ["Пример из материалов", "Загрузить файл", "Вставить текст"], horizontal=True)
     marker, loaded = (source,), ""
     if source == "Пример из материалов":
@@ -153,16 +156,17 @@ if state.step == 0:
     text = st.text_area("Текст заявки — можно править прямо здесь", key="request_text", height=460)
     st.caption("Поправили заявку после аналитики — нажмите «Сравнить» ещё раз, результат пересчитается.")
 
-    st.divider()
-    _, right = st.columns([3, 1])
-    if right.button("Сравнить с рынком →", type="primary", disabled=not text.strip(), width="stretch"):
+    if compare_clicked and not text.strip():
+        progress.warning("Заявка пустая — вставьте текст или загрузите файл.")
+    elif compare_clicked:
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if state.get("analysis", {}).get("digest") != digest:
-            try:
-                state.analysis = {**analyze(text), "digest": digest}
-            except llm.LLMError as error:
-                st.error(str(error))
-                st.stop()
+            with progress:
+                try:
+                    state.analysis = {**analyze(text), "digest": digest}
+                except llm.LLMError as error:
+                    st.error(str(error))
+                    st.stop()
         go(1)
 
 elif state.step == 1:
