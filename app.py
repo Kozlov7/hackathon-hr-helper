@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import time
 
 import pandas as pd
 import streamlit as st
@@ -13,6 +14,7 @@ import parse
 SAMPLE_REQUEST = os.path.join(os.path.dirname(__file__), "data", "sample_request.docx")
 STEPS = ["Заявка", "Аналитика рынка", "Вакансия"]
 CITY = "Ижевск"
+MIN_ANALOGS = 3
 SECTIONS = (("ed_duties", "duties", "Обязанности"), ("ed_requirements", "requirements", "Требования"),
             ("ed_conditions", "conditions", "Условия"), ("ed_skills", "skills", "Ключевые навыки"))
 
@@ -97,25 +99,35 @@ def examples_block(examples, limit=4):
 
 
 def analyze(text):
-    with st.status("Сравниваем заявку с рынком — обычно около минуты…", expanded=True) as status:
-        st.write("① GigaChat разбирает заявку")
+    started = time.time()
+    with st.container(border=True):
+        st.markdown("**Сравниваем заявку с рынком** — обычно около минуты")
+        bar = st.progress(0)
+
+        def stage(number, label):
+            bar.progress((number - 1) / 5, text=f"Этап {number} из 5: {label} · прошло {time.time() - started:.0f} с")
+
+        stage(1, "GigaChat разбирает заявку")
         request = parse.parse_request(text)
-        st.write("② Отбираем вакансии по должности и городу")
+        stage(2, "отбираем вакансии по должности и городу")
         base = parse.load_base()
         candidates, rejected = parse.prefilter(base, request.get("search_titles", []), CITY)
-        st.write(f"③ Читаем вакансии ({len(candidates)})")
+        widened = len(candidates) < MIN_ANALOGS
+        if widened:
+            candidates, rejected = parse.prefilter(base, None, CITY)
+        stage(3, f"читаем вакансии ({len(candidates)})")
         parse.enrich(candidates)
         rows, market_only = [], []
+        stage(4, "GigaChat оценивает похожесть вакансий")
         if candidates:
-            st.write("④ GigaChat оценивает похожесть")
             compare.relevance(request, candidates)
-            chosen = [v for v in candidates if v["relevant"]]
-            if chosen:
-                st.write("⑤ GigaChat сравнивает требования")
-                rows, market_only = compare.requirements(request, chosen)
-        status.update(label="Готово", state="complete")
+        chosen = [v for v in candidates if v["relevant"]]
+        stage(5, "GigaChat сравнивает требования с рынком")
+        if chosen:
+            rows, market_only = compare.requirements(request, chosen)
+        bar.progress(1.0, text=f"Готово за {time.time() - started:.0f} с")
     return {"request": request, "base": len(base), "candidates": candidates, "rejected": rejected,
-            "rows": rows, "market_only": market_only}
+            "rows": rows, "market_only": market_only, "widened": widened}
 
 
 def set_editor(vacancy):
@@ -174,12 +186,19 @@ elif state.step == 1:
     request = analysis["request"]
     chosen = [v for v in analysis["candidates"] if v["relevant"]]
     if not chosen:
-        st.warning("Похожих вакансий в базе не нашлось — проверьте название должности в заявке.")
+        st.warning(
+            f"В базе ({analysis['base']} вакансий) нет похожих на «{request['profile']['title']}» — сравнить с рынком не с чем. "
+            "Вакансию всё равно можно сформировать по заявке. Чтобы было сравнение, добавьте похожие вакансии в базу."
+        )
     else:
         st.markdown(
             f"Сравнили заявку **«{request['profile']['title']}»** с **{len(chosen)}** похожими вакансиями "
             f"из {analysis['base']} в базе (город — {CITY})."
         )
+        if analysis.get("widened"):
+            st.caption("По названию должности нашлось мало вакансий, поэтому GigaChat просмотрел все вакансии города и выбрал похожие по смыслу.")
+        if len(chosen) < MIN_ANALOGS:
+            st.warning(f"Похожих вакансий всего {len(chosen)} — выводы ниже ненадёжны, используйте их как подсказку.")
         stats = compare.salary_stats(chosen)
         if stats:
             values = f"{stats['min']:,.0f} ₽" if stats["min"] == stats["max"] else f"{stats['min']:,.0f} – {stats['max']:,.0f} ₽"
@@ -252,7 +271,7 @@ elif state.step == 1:
     left, _, right = st.columns([1, 2, 1])
     if left.button("← Поправить заявку", width="stretch"):
         go(0)
-    if right.button("Сформировать вакансию →", type="primary", disabled=not chosen, width="stretch"):
+    if right.button("Сформировать вакансию →", type="primary", width="stretch"):
         go(2)
 
 else:
@@ -283,7 +302,7 @@ else:
                 vacancy[field] = [line.strip(" -•") for line in value.splitlines() if line.strip(" -•")]
 
     with st.container(border=True):
-        st.html(f"<style>{generate.CSS}</style>{generate.render_html(vacancy)}")
+        st.html(f"<style>{generate.styles()}</style>{generate.render_html(vacancy)}")
 
     col1, col2, col3, col4 = st.columns(4)
     col1.download_button(

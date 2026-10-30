@@ -131,6 +131,8 @@ def as_markdown(text):
 HEALTH_LIMITS = r"противопоказ|эпилепс|заболеван"
 SAFE_HEALTH = "работа связана с визуальным контролем качества продукции и чтением чертежей"
 CONCRETE = {"salary": r"\d", "schedule": r"\d"}
+DISCRIMINATION = r"мужчин|женщин|\bдо \d{2} лет|\bот \d{2} до \d{2} лет|возраст|славян|без детей"
+BAD_SUGGESTION = HEALTH_LIMITS + "|" + DISCRIMINATION
 
 
 def _guard_health(request):
@@ -157,6 +159,34 @@ def _guard_health(request):
                 )
 
 
+def _overlap(a, b):
+    stems = lambda t: {w[:5] for w in re.findall(r"[а-яёa-z]{4,}", t.lower().replace("ё", "е"))}
+    first, second = stems(a), stems(b)
+    return len(first & second) / len(first) if first else 0
+
+
+def _guard_do_not_publish(request):
+    for section in ("requirements", "conditions", "duties"):
+        for item in list(request.get(section, [])):
+            if re.search(DISCRIMINATION, item["text"] if isinstance(item, dict) else item, re.IGNORECASE):
+                text = item["text"] if isinstance(item, dict) else item
+                if not any(_overlap(text, d.get("quote", "")) >= 0.6 for d in request.get("do_not_publish", [])):
+                    request.setdefault("do_not_publish", []).append(
+                        {"quote": text, "reason": "Требование к полу или возрасту — дискриминация", "action": "убрать", "suggestion": ""}
+                    )
+    quotes = [d.get("quote", "") for d in request.get("do_not_publish", [])]
+    for section in ("requirements", "conditions", "duties"):
+        request[section] = [
+            item
+            for item in request.get(section, [])
+            if not any(_overlap(item["text"] if isinstance(item, dict) else item, q) >= 0.6 for q in quotes)
+        ]
+    for item in request.get("do_not_publish", []):
+        if item.get("suggestion") and item["suggestion"] != SAFE_HEALTH and re.search(BAD_SUGGESTION, item["suggestion"], re.IGNORECASE):
+            item["suggestion"] = ""
+            item["action"] = "убрать"
+
+
 def _guard_concrete(request):
     for key, pattern in CONCRETE.items():
         field = request["fields"].get(key, {})
@@ -167,6 +197,7 @@ def _guard_concrete(request):
 def parse_request(text):
     request = llm.ask_json("parse_request", REQUEST_SYSTEM, f"Заявка руководителя:\n\n{text}")
     _guard_health(request)
+    _guard_do_not_publish(request)
     _guard_concrete(request)
     flagged = " ".join(item.get("quote", "") for item in request.get("do_not_publish", []))
     for match in re.finditer(r"[^\n.;]*\[[^\]]{0,20}\][^\n.;]*", text):
@@ -249,7 +280,7 @@ def prefilter(base, search_titles, city):
     for vacancy in base:
         title = vacancy["meta"].get("Должность", "")
         place = vacancy["meta"].get("Город", "")
-        if not title_matches(title, search_titles):
+        if search_titles is not None and not title_matches(title, search_titles):
             rejected.append((vacancy, "другая должность"))
         elif city.strip() and not place.lower().startswith(city.strip().lower()):
             rejected.append((vacancy, f"другой город: {place}"))
