@@ -128,11 +128,16 @@ def as_markdown(text):
     return "\n".join(lines)
 
 
-HEALTH_LIMITS = r"противопоказ|эпилепс"
+HEALTH_LIMITS = r"противопоказ|эпилепс|заболеван"
+SAFE_HEALTH = "работа связана с визуальным контролем качества продукции и чтением чертежей"
 CONCRETE = {"salary": r"\d", "schedule": r"\d"}
 
 
 def _guard_health(request):
+    for item in request.get("do_not_publish", []):
+        health = re.search(HEALTH_LIMITS, item.get("quote", ""), re.IGNORECASE)
+        if health and re.search(HEALTH_LIMITS + r"|зрени|неврологи|ограничени", item.get("suggestion", ""), re.IGNORECASE):
+            item["suggestion"] = SAFE_HEALTH
     flagged = " ".join(item.get("quote", "") for item in request.get("do_not_publish", []))
     for section in ("conditions", "requirements"):
         for item in list(request.get(section, [])):
@@ -147,7 +152,7 @@ def _guard_health(request):
                         "quote": text,
                         "reason": "Перечисление заболеваний в публичной вакансии может выглядеть как дискриминация по здоровью",
                         "action": "переформулировать",
-                        "suggestion": "работа связана с визуальным контролем качества продукции и чтением чертежей",
+                        "suggestion": SAFE_HEALTH,
                     }
                 )
 
