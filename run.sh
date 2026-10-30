@@ -13,6 +13,17 @@ open_browser() {
     fi
 }
 
+download_get_pip() {
+    local url="https://bootstrap.pypa.io/get-pip.py" out=".venv/get-pip.py"
+    for _ in 1 2 3; do
+        if command -v curl >/dev/null 2>&1 && curl -fsSL "$url" -o "$out"; then return 0; fi
+        if command -v wget >/dev/null 2>&1 && wget -q "$url" -O "$out"; then return 0; fi
+        if python3 -c "import urllib.request; urllib.request.urlretrieve('$url', '$out')" 2>/dev/null; then return 0; fi
+        sleep 2
+    done
+    return 1
+}
+
 if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
     echo "Нужен Python 3.10 или новее. Сейчас: $(python3 --version 2>&1)"
     exit 1
@@ -23,9 +34,7 @@ if [ ! -x .venv/bin/streamlit ]; then
     if ! python3 -m venv .venv >/dev/null 2>&1; then
         echo "В системе нет python3-venv — ставлю pip отдельно (нужен интернет)..."
         rm -rf .venv
-        if ! python3 -m venv --without-pip .venv \
-            || ! python3 -c "import urllib.request; urllib.request.urlretrieve('https://bootstrap.pypa.io/get-pip.py', '.venv/get-pip.py')" \
-            || ! .venv/bin/python .venv/get-pip.py -q; then
+        if ! python3 -m venv --without-pip .venv || ! download_get_pip || ! .venv/bin/python .venv/get-pip.py -q; then
             echo "Не получилось создать окружение. Попробуйте: sudo apt install python3-venv  (или python3.X-venv)"
             rm -rf .venv
             exit 1
