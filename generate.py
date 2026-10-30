@@ -10,31 +10,43 @@ import llm
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "data", "template_irz.txt")
 COMPANY = "АО «ИРЗ»"
-COMPANY_INTRO = [
-    "ИЖЕВСКИЙ РАДИОЗАВОД — российская группа приборостроительных компаний, реализующая российские "
-    "и международные проекты в области космоса, железной дороги, топливно-энергетического комплекса.",
-    "Дата основания — 6 марта 1958 года. На текущий момент предприятие насчитывает более 5500 человек.",
-]
 HEADER_FIELDS = (
     ("experience", "Опыт работы"),
     ("schedule", "График"),
     ("employment", "Оформление"),
     ("address", "Адрес"),
 )
-SECTIONS = (("duties", "Обязанности"), ("requirements", "Требования"), ("conditions", "Условия"))
+SECTIONS = (
+    ("duties", "Твоя зона ответственности"),
+    ("requirements", "Ожидаем от тебя"),
+    ("offer", "Мы обеспечим"),
+    ("conditions", "Условия работы"),
+)
+TEXTS = ("lead", "summary", "closing")
 LEAK_PATTERNS = r"\[[^\]]{0,20}\]|эпилепс|противопоказ|заболеван|невролог|этап\w* отбора|принимает решение|мужчин|женщин|\bдо \d{2} лет|возраст"
 
-VACANCY_SYSTEM = """Ты — HR-редактор АО «ИРЗ». Подготовь вакансию для hh.ru строго в формате компании (шаблон ниже).
+VACANCY_SYSTEM = """Ты — HR-редактор АО «ИРЗ». Напиши вакансию для hh.ru в фирменном стиле компании (образец ниже).
+
+Стиль ИРЗ:
+- lead — одно цепляющее предложение «Ищем <кого>, который/которая …» о смысле работы (будет выделено жирным);
+- summary — 1-2 предложения о том, что входит в работу («В твою зону ответственности войдёт …»);
+- обращение на «ты»;
+- duties («Твоя зона ответственности») — каждый пункт: «ключевая фраза: пояснение»
+  (например «контроль качества: проверять продукцию на соответствие ГОСТ и ТУ»);
+- requirements («Ожидаем от тебя») — короткие пункты с маленькой буквы;
+- offer («Мы обеспечим») — что компания даёт сотруднику: оплата, премии, поддержка (только из заявки);
+- conditions («Условия работы») — график, условия труда, подчинение, размер команды;
+- closing — финальная фраза «Если ты готов …, ждём твоего отклика!».
 
 Жёсткие правила:
-1. Используй только факты из разбора заявки. Ничего не добавляй от себя: ни зарплатных цифр, ни льгот,
-   ни адреса, ни графика, если их нет в заявке.
-2. Перенеси ВСЕ обязанности, требования и условия из разбора — ни один пункт не пропускай
-   (можно только объединить явные повторы).
+1. Только факты из разбора заявки. Не добавляй ни зарплатных цифр, ни льгот, ни адреса, ни графика,
+   которых нет в заявке. В lead, summary и closing — тоже никаких новых фактов.
+2. Перенеси ВСЕ обязанности, требования и условия из разбора — ни один пункт не пропускай.
 3. Не включай ничего из списка do_not_publish. Если для пункта дана безопасная формулировка (suggestion) — используй её.
-4. Пункты — с маленькой буквы, без точки в конце, как в шаблоне. Требования не ужесточай и не смягчай.
-5. skills — 3-6 ключевых навыков короткими тегами, только из требований и обязанностей заявки.
-Верни JSON: {"title": "должность", "duties": ["..."], "requirements": ["..."], "conditions": ["..."], "skills": ["..."]}"""
+4. Пункты с маленькой буквы, без точки в конце. Требования не ужесточай и не смягчай.
+5. skills — 3-6 ключевых навыков короткими тегами, только из заявки.
+Верни JSON: {"title": "должность", "lead": "...", "summary": "...", "duties": ["..."], "requirements": ["..."],
+"offer": ["..."], "conditions": ["..."], "closing": "...", "skills": ["..."]}"""
 
 
 def load_template():
@@ -53,9 +65,12 @@ def _stems(text):
 
 def plain_text(vacancy):
     lines = [vacancy["title"], ""]
+    lines += [vacancy[key] for key in ("lead", "summary") if vacancy.get(key)] + [""]
     for key, title in SECTIONS:
         if vacancy[key]:
             lines += [f"{title}:", *[f"- {x}" for x in vacancy[key]], ""]
+    if vacancy.get("closing"):
+        lines += [vacancy["closing"], ""]
     if vacancy["skills"]:
         lines.append("Ключевые навыки: " + ", ".join(vacancy["skills"]))
     return "\n".join(lines).strip()
@@ -92,14 +107,31 @@ def header(request):
     return rows
 
 
+def _request_stems(request):
+    parts = request["duties"] + [r["text"] for r in request["requirements"]] + request["conditions"]
+    parts += [f.get("value", "") for f in request["fields"].values()]
+    parts += [d.get("suggestion", "") for d in request.get("do_not_publish", [])]
+    return _stems(" ".join(parts))
+
+
+def _supported(item, known):
+    words = _stems(item)
+    return not words or len(words & known) / len(words) >= 0.34
+
+
 def _finish(data, request):
     vacancy = {"title": str(data.get("title") or request["profile"]["title"]).strip()}
-    for key in ("duties", "requirements", "conditions", "skills"):
+    for key in ("duties", "requirements", "offer", "conditions", "skills"):
         items = [_item(x) for x in data.get(key, []) if str(x).strip()]
         vacancy[key] = [x for x in items if not re.search(LEAK_PATTERNS, x, re.IGNORECASE)]
+    known = _request_stems(request)
+    for key in ("offer", "conditions"):
+        vacancy[key] = [x for x in vacancy[key] if _supported(x, known)]
+    for key in TEXTS:
+        text = str(data.get(key) or "").strip()
+        vacancy[key] = "" if re.search(LEAK_PATTERNS, text, re.IGNORECASE) else text
     vacancy["skills"] = [s[:1].upper() + s[1:] for s in vacancy["skills"]]
     vacancy["header"] = header(request)
-    vacancy["intro"] = list(COMPANY_INTRO)
     return vacancy
 
 
@@ -110,9 +142,12 @@ def demo_vacancy(request):
             conditions.append(item["suggestion"])
     data = {
         "title": request["profile"]["title"],
+        "lead": f"Ищем: {request['profile']['title'].lower()}",
+        "summary": request["profile"].get("summary", ""),
         "duties": request["duties"],
         "requirements": [r["text"] for r in request["requirements"]],
         "conditions": conditions,
+        "closing": "Если ты готов к новым задачам — ждём твоего отклика!",
         "skills": [],
     }
     return _finish(data, request)
@@ -140,14 +175,39 @@ def generate_vacancy(request):
     return vacancy
 
 
-def hh_html(vacancy):
+def split_key(item):
+    head, sep, tail = item.partition(": ")
+    if sep and 0 < len(head) <= 45:
+        return head, tail
+    return "", item
+
+
+def _li(item):
+    head, tail = split_key(item)
+    if head:
+        return f"<li><strong>{html.escape(head)}</strong>: {html.escape(tail)}</li>"
+    return f"<li>{html.escape(item)}</li>"
+
+
+def description_html(vacancy, title_class=""):
     e = html.escape
+    attr = f' class="{title_class}"' if title_class else ""
     parts = []
+    if vacancy.get("lead"):
+        parts.append(f"<p><strong>{e(vacancy['lead'])}</strong></p>")
+    if vacancy.get("summary"):
+        parts.append(f"<p>{e(vacancy['summary'])}</p>")
     for key, title in SECTIONS:
-        if vacancy[key]:
-            parts.append(f"<p><strong>{title}:</strong></p>")
-            parts.append("<ul>" + "".join(f"<li>{e(x)}</li>" for x in vacancy[key]) + "</ul>")
+        if vacancy.get(key):
+            parts.append(f"<p{attr}><strong>{title}:</strong></p>")
+            parts.append("<ul>" + "".join(_li(x) for x in vacancy[key]) + "</ul>")
+    if vacancy.get("closing"):
+        parts.append(f"<p>{e(vacancy['closing'])}</p>")
     return "\n".join(parts)
+
+
+def hh_html(vacancy):
+    return description_html(vacancy)
 
 
 BRAND_DIR = os.path.join(os.path.dirname(__file__), "data", "brand")
@@ -216,6 +276,7 @@ CSS = f"""
 .vacancy .about p {{margin: 0 0 12px 0;}}
 .vacancy .about strong {{font-size: 22px; line-height: 130%;}}
 .vacancy .content {{padding-top: 18px;}}
+.vacancy .content p {{margin: 0 0 16px 0;}}
 .vacancy .content .title {{margin: 0 0 12px 0; font-weight: 700; font-size: 22px; line-height: 130%;}}
 .vacancy .content ul {{list-style: none; margin: 0 0 32px 18px; padding: 0;}}
 .vacancy .content li {{position: relative; margin-bottom: 4px;}}
@@ -274,11 +335,7 @@ def render_html(vacancy):
         f'<div class="slide" style="background-image:url({asset(image)})"><p><span>{number}</span> {text}</p></div>'
         for image, number, text in SLIDES
     )
-    sections = ""
-    for key, title in SECTIONS:
-        if vacancy[key]:
-            items = "".join(f"<li>{e(x)}</li>" for x in vacancy[key])
-            sections += f'<p class="title">{title}:</p><ul>{items}</ul>'
+    sections = description_html(vacancy, "title")
     values = "".join(
         f'<li><div class="inner"><div class="front"><img src="{asset(icon)}" alt=""><p>{title}</p></div>'
         f'<div class="back"><p>{text}</p></div></div></li>'
@@ -345,13 +402,25 @@ def to_docx(vacancy):
     for label, value in vacancy["header"]:
         document.add_paragraph(f"{label}: {value}")
     document.add_paragraph(f"{COMPANY}, Ижевск")
-    for paragraph in vacancy["intro"]:
-        document.add_paragraph(paragraph)
+    for paragraph in ABOUT:
+        document.add_paragraph(re.sub(r"<[^>]+>", "", paragraph))
+    if vacancy.get("lead"):
+        document.add_paragraph().add_run(vacancy["lead"]).bold = True
+    if vacancy.get("summary"):
+        document.add_paragraph(vacancy["summary"])
     for key, title in SECTIONS:
-        if vacancy[key]:
+        if vacancy.get(key):
             document.add_paragraph().add_run(f"{title}:").bold = True
             for item in vacancy[key]:
-                document.add_paragraph(item, style="List Bullet")
+                head, tail = split_key(item)
+                paragraph = document.add_paragraph(style="List Bullet")
+                if head:
+                    paragraph.add_run(head).bold = True
+                    paragraph.add_run(f": {tail}")
+                else:
+                    paragraph.add_run(item)
+    if vacancy.get("closing"):
+        document.add_paragraph(vacancy["closing"])
     if vacancy["skills"]:
         document.add_paragraph().add_run("Ключевые навыки:").bold = True
         document.add_paragraph(", ".join(vacancy["skills"]))

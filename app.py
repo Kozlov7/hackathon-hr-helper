@@ -15,8 +15,12 @@ SAMPLE_REQUEST = os.path.join(os.path.dirname(__file__), "data", "sample_request
 STEPS = ["Заявка", "Аналитика рынка", "Вакансия"]
 CITY = "Ижевск"
 MIN_ANALOGS = 3
-SECTIONS = (("ed_duties", "duties", "Обязанности"), ("ed_requirements", "requirements", "Требования"),
-            ("ed_conditions", "conditions", "Условия"), ("ed_skills", "skills", "Ключевые навыки"))
+SECTIONS = (("ed_duties", "duties", "Твоя зона ответственности (ключ: пояснение)"),
+            ("ed_requirements", "requirements", "Ожидаем от тебя"),
+            ("ed_offer", "offer", "Мы обеспечим"), ("ed_conditions", "conditions", "Условия работы"),
+            ("ed_skills", "skills", "Ключевые навыки"))
+TEXTS = (("ed_lead", "lead", "Первая строка (жирным)"), ("ed_summary", "summary", "Абзац о роли"),
+         ("ed_closing", "closing", "Финальная фраза"))
 
 st.set_page_config(page_title="HR-помощник: вакансия", page_icon="📋", layout="wide", initial_sidebar_state="collapsed")
 state = st.session_state
@@ -133,7 +137,9 @@ def analyze(text):
 def set_editor(vacancy):
     state.ed_title = vacancy["title"]
     for key, field, _ in SECTIONS:
-        state[key] = "\n".join(vacancy[field])
+        state[key] = "\n".join(vacancy.get(field, []))
+    for key, field, _ in TEXTS:
+        state[key] = vacancy.get(field, "")
 
 
 top_left, top_right = st.columns([3, 1])
@@ -296,6 +302,8 @@ else:
         with st.container(border=True):
             st.caption("Каждый пункт — с новой строки. Предпросмотр ниже обновляется сразу.")
             vacancy["title"] = st.text_input("Должность", key="ed_title")
+            for key, field, label in TEXTS:
+                vacancy[field] = st.text_input(label, key=key).strip()
             col1, col2 = st.columns(2)
             for i, (key, field, label) in enumerate(SECTIONS):
                 value = (col1 if i % 2 == 0 else col2).text_area(label, key=key, height=200)
