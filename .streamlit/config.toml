@@ -4,3 +4,9 @@ primaryColor = "#1f5fbf"
 
 [client]
 toolbarMode = "minimal"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

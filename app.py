@@ -67,6 +67,7 @@ def go(step):
 
 
 def copy_button(text, label="📋 Скопировать"):
+    payload = json.dumps(text).replace("</", "<\\/")
     st.iframe(
         f"""
 <style>
@@ -77,7 +78,7 @@ body {{margin: 0;}}
 </style>
 <button id="copy">{label}</button>
 <script>
-const text = {json.dumps(text).replace("</", "<\\/")};
+const text = {payload};
 const button = document.getElementById("copy");
 button.onclick = async () => {{
   try {{ await navigator.clipboard.writeText(text); }}
