@@ -20,9 +20,16 @@ fi
 
 if [ ! -x .venv/bin/streamlit ]; then
     echo "Первый запуск: ставлю библиотеки, это 1-3 минуты..."
-    if ! python3 -m venv .venv; then
-        echo "Не получилось создать окружение. На Ubuntu: sudo apt install python3-venv"
-        exit 1
+    if ! python3 -m venv .venv >/dev/null 2>&1; then
+        echo "В системе нет python3-venv — ставлю pip отдельно (нужен интернет)..."
+        rm -rf .venv
+        if ! python3 -m venv --without-pip .venv \
+            || ! python3 -c "import urllib.request; urllib.request.urlretrieve('https://bootstrap.pypa.io/get-pip.py', '.venv/get-pip.py')" \
+            || ! .venv/bin/python .venv/get-pip.py -q; then
+            echo "Не получилось создать окружение. Попробуйте: sudo apt install python3-venv  (или python3.X-venv)"
+            rm -rf .venv
+            exit 1
+        fi
     fi
     .venv/bin/pip install -q --upgrade pip
     if ! .venv/bin/pip install -q -r requirements.txt; then
