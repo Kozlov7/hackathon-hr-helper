@@ -34,7 +34,20 @@ fi
 
 if [ ! -f .env ]; then
     cp .env.example .env
-    echo "Создан файл .env — впишите в него ключ GigaChat. Без ключа программа работает в демо-режиме."
+fi
+if ! grep -q '^GIGACHAT_AUTH_KEY=..' .env && [ -t 0 ]; then
+    echo
+    echo "Вставьте ключ GigaChat (Ctrl+Shift+V) и нажмите Enter."
+    echo "Просто Enter — запуск в демо-режиме без GigaChat."
+    read -r KEY
+    KEY="$(echo "$KEY" | tr -d '[:space:]')"
+    if [ -n "$KEY" ]; then
+        grep -v '^GIGACHAT_AUTH_KEY=' .env > .env.tmp
+        echo "GIGACHAT_AUTH_KEY=$KEY" >> .env.tmp
+        mv .env.tmp .env
+        chmod 600 .env
+        echo "Ключ сохранён в .env (в git он не попадает)."
+    fi
 fi
 
 if .venv/bin/python -c "import urllib.request; urllib.request.urlopen('$URL', timeout=2)" 2>/dev/null; then
